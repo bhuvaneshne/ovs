@@ -335,6 +335,12 @@ struct user_action_cookie {
             uint32_t obs_point_id;  /* Observation Point ID. */
             odp_port_t output_odp_port; /* The output odp port. */
             enum nx_action_sample_direction direction;
+            ovs_be64 flow_metadata;
+            uint32_t app_name;
+            uint8_t msisdn[16];
+            struct eth_addr apn_mac_addr;
+            uint8_t apn_name[24];
+            uint64_t pdp_start_epoch;
         } flow_sample;
 
         struct {
@@ -354,7 +360,7 @@ struct user_action_cookie {
         } controller;
     };
 };
-BUILD_ASSERT_DECL(sizeof(struct user_action_cookie) == 48);
+BUILD_ASSERT_DECL(sizeof(struct user_action_cookie) == 120);
 
 int odp_put_userspace_action(uint32_t pid,
                              const void *userdata, size_t userdata_size,

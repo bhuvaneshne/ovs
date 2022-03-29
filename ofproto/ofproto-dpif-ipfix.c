@@ -88,6 +88,7 @@ enum dpif_ipfix_tunnel_type {
     DPIF_IPFIX_TUNNEL_LISP = 0x03,
     DPIF_IPFIX_TUNNEL_STT = 0x04,
     DPIF_IPFIX_TUNNEL_GENEVE = 0x07,
+    DPIF_IPFIX_TUNNEL_GTP = 0x08,
     NUM_DPIF_IPFIX_TUNNEL
 };
 
@@ -389,6 +390,7 @@ static uint8_t tunnel_protocol[NUM_DPIF_IPFIX_TUNNEL] = {
     IPPROTO_TCP,    /* DPIF_IPFIX_TUNNEL_STT*/
     0          ,    /* reserved */
     IPPROTO_UDP,    /* DPIF_IPFIX_TUNNEL_GENEVE*/
+    IPPROTO_UDP,    /* DPIF_IPFIX_TUNNEL_GTP*/
 };
 
 OVS_PACKED(
@@ -403,6 +405,17 @@ struct ipfix_data_record_flow_key_tunnel {
     uint8_t tunnel_key[];  /* data of  TUNNEL_KEY */
 });
 BUILD_ASSERT_DECL(sizeof(struct ipfix_data_record_flow_key_tunnel) == 15);
+
+OVS_PACKED(
+struct ipfix_data_ipdr_fields {
+    ovs_be64 imsi;  /* IMSI_REGISTER*/
+    uint8_t msisdn[16];  /* MSISDN */
+    struct eth_addr apn_mac_address;  /* APN_MAC_ADDRESS */
+    uint8_t apn_name[24];  /* APN_NAME */
+    uint32_t app_name;  /* APP_NAME */
+    uint64_t pdp_start_epoch; /* PDP_START_EPOCH */
+});
+BUILD_ASSERT_DECL(sizeof(struct ipfix_data_ipdr_fields) == 66);
 
 /* Cf. IETF RFC 5102 Section 5.11.3. */
 enum ipfix_flow_end_reason {
@@ -509,6 +522,7 @@ BUILD_ASSERT_DECL(sizeof(struct ipfix_data_record_aggregated_tcp) == 48);
  * support tunnel key for:
  * VxLAN: 24-bit VIN,
  * GRE: 32-bit key,
+ * GTP: 32-bit key,
  * LISP: 24-bit instance ID
  * STT: 64-bit key
  */
@@ -536,6 +550,7 @@ BUILD_ASSERT_DECL(sizeof(struct ipfix_data_record_aggregated_tcp) == 48);
      + MAX(sizeof(struct ipfix_data_record_flow_key_icmp),      \
            sizeof(struct ipfix_data_record_flow_key_transport)) \
      + sizeof(struct ipfix_data_record_flow_key_tunnel)         \
+     + sizeof(struct ipfix_data_ipdr_fields)                    \
      + MAX_TUNNEL_KEY_LEN)
 
 #define MAX_DATA_RECORD_LEN                                 \
@@ -807,6 +822,8 @@ dpif_ipfix_tunnel_type(const struct ofport *ofport)
         return DPIF_IPFIX_TUNNEL_VXLAN;
     } else if (strcmp(type, "lisp") == 0) {
         return DPIF_IPFIX_TUNNEL_LISP;
+    } else if (strcmp(type, "gtpu") == 0) {
+        return DPIF_IPFIX_TUNNEL_GTP;
     } else if (strcmp(type, "geneve") == 0) {
         return DPIF_IPFIX_TUNNEL_GENEVE;
     } else if (strcmp(type, "stt") == 0) {
@@ -822,6 +839,7 @@ dpif_ipfix_tunnel_key_length(enum dpif_ipfix_tunnel_type tunnel_type)
 
     switch (tunnel_type) {
         case DPIF_IPFIX_TUNNEL_GRE:
+        case DPIF_IPFIX_TUNNEL_GTP:
             /* 32-bit key gre */
             return 4;
         case DPIF_IPFIX_TUNNEL_VXLAN:
@@ -1477,6 +1495,14 @@ ipfix_define_template_fields(enum ipfix_proto_l2 l2, enum ipfix_proto_l3 l3,
         DEF(TUNNEL_KEY);
     }
 
+    /* Custom IPDR fields */
+    DEF(IMSI_REG);
+    DEF(MSISDN);
+    DEF(APN_MAC_ADDRESS);
+    DEF(APN_NAME);
+    DEF(APP_NAME);
+    DEF(PDP_START_EPOCH);
+
     /* 2. Virtual observation ID, which is not a part of flow key. */
     if (virtual_obs_id_set) {
         DEF(VIRTUAL_OBS_ID);
@@ -2092,6 +2118,9 @@ ipfix_cache_entry_init(const struct dpif_ipfix *di,
                        uint64_t packet_delta_count, uint32_t obs_domain_id,
                        uint32_t obs_point_id, odp_port_t output_odp_port,
                        enum nx_action_sample_direction direction,
+                       ovs_be64 flow_metadata, uint8_t *msisdn,
+                       struct eth_addr *apn_mac_addr, uint8_t *apn_name,
+                       uint32_t app_name, uint64_t pdp_start_epoch,
                        const struct dpif_ipfix_port *tunnel_port,
                        const struct flow_tnl *tunnel_key,
                        struct dpif_ipfix_global_stats *stats,
@@ -2287,6 +2316,20 @@ ipfix_cache_entry_init(const struct dpif_ipfix *di,
                &tun_id[8 - tunnel_port->tunnel_key_length],
                tunnel_port->tunnel_key_length);
     }
+
+    /* Add custom IPDR fields */
+    struct ipfix_data_ipdr_fields *ipdr_data;
+
+    ipdr_data = dp_packet_put_zeros(&msg, sizeof *ipdr_data);
+    ipdr_data->imsi = flow_metadata;
+    ipdr_data->app_name = app_name;
+    ipdr_data->pdp_start_epoch = pdp_start_epoch;
+    if (msisdn != NULL)
+        memcpy(&ipdr_data->msisdn, msisdn, 16);
+    if (apn_mac_addr != NULL)
+        memcpy(&ipdr_data->apn_mac_address, apn_mac_addr, sizeof(struct eth_addr));
+    if (apn_name != NULL)
+        memcpy(&ipdr_data->apn_name, apn_name, 24);
 
     flow_key->flow_key_msg_part_size = dp_packet_size(&msg);
 
@@ -2661,6 +2704,9 @@ dpif_ipfix_sample(const struct dpif_ipfix *di,
                   uint64_t packet_delta_count, uint32_t obs_domain_id,
                   uint32_t obs_point_id, odp_port_t output_odp_port,
                   enum nx_action_sample_direction direction,
+                  ovs_be64 flow_metadata, uint8_t *msisdn,
+                  struct eth_addr *apn_mac_addr, uint8_t *apn_name,
+                  uint32_t app_name, uint64_t pdp_start_epoch,
                   const struct dpif_ipfix_port *tunnel_port,
                   const struct flow_tnl *tunnel_key,
                   const struct dpif_ipfix_actions *ipfix_actions)
@@ -2676,6 +2722,9 @@ dpif_ipfix_sample(const struct dpif_ipfix *di,
                                    flow, packet_delta_count,
                                    obs_domain_id, obs_point_id,
                                    output_odp_port, direction,
+                                   flow_metadata, msisdn,
+                                   apn_mac_addr, apn_name,
+                                   app_name, pdp_start_epoch,
                                    tunnel_port, tunnel_key,
                                    &exporter->ipfix_global_stats,
                                    ipfix_actions);
@@ -2744,6 +2793,7 @@ dpif_ipfix_bridge_sample(struct dpif_ipfix *di, const struct dp_packet *packet,
                       di->bridge_exporter.options->obs_domain_id,
                       di->bridge_exporter.options->obs_point_id,
                       output_odp_port, NX_ACTION_SAMPLE_DEFAULT,
+                      0, NULL, NULL, NULL, 0, 0, //not available for bridge export
                       tunnel_port, tunnel_key, ipfix_actions);
     ovs_mutex_unlock(&mutex);
 }
@@ -2789,6 +2839,9 @@ dpif_ipfix_flow_sample(struct dpif_ipfix *di, const struct dp_packet *packet,
                           cookie->flow_sample.obs_domain_id,
                           cookie->flow_sample.obs_point_id,
                           output_odp_port, cookie->flow_sample.direction,
+                          cookie->flow_sample.flow_metadata, (uint8_t *)&cookie->flow_sample.msisdn,
+                          (struct eth_addr *)&cookie->flow_sample.apn_mac_addr, (uint8_t *)&cookie->flow_sample.apn_name,
+                          cookie->flow_sample.app_name, cookie->flow_sample.pdp_start_epoch,
                           tunnel_port, tunnel_key, ipfix_actions);
     }
     ovs_mutex_unlock(&mutex);

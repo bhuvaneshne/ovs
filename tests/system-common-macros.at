@@ -160,6 +160,25 @@ m4_define([ADD_CVLAN],
     ]
 )
 
+# ADD_OVS_TUNNEL_NO_REMOTE([type], [bridge], [port], [overlay-addr],
+#                [tunnel-args])
+#
+# Add an ovs-based tunnel device in the root namespace, with name 'port' and
+# type 'type'. The tunnel device will be configured as point-to-point with the
+# 'remote-addr' as the underlay address of the remote tunnel endpoint.
+#
+# 'port will be configured with the address 'overlay-addr'.
+#
+m4_define([ADD_OVS_TUNNEL_NO_REMOTE],
+   [AT_CHECK([ovs-vsctl add-port $2 $3 -- \
+              set int $3 type=$1 options:remote_ip=flow $5])
+    AT_CHECK([ip addr add dev $2 $4])
+    AT_CHECK([ip link set dev $2 up])
+    AT_CHECK([ip link set dev $2 mtu 1450])
+    on_exit 'ip addr del dev $2 $4'
+   ]
+)
+
 # ADD_OVS_TUNNEL([type], [bridge], [port], [remote-addr], [overlay-addr],
 #                [tunnel-args])
 #
@@ -322,6 +341,13 @@ m4_define([OVS_CHECK_GENEVE],
 m4_define([OVS_CHECK_GENEVE_UDP6ZEROCSUM],
     [AT_SKIP_IF([! ip link add foo type geneve help 2>&1 | grep udp6zerocsum >/dev/null])
      OVS_CHECK_FIREWALL()])
+
+# OVS_CHECK_GTP_L3()
+# GTP Unit test depends on http://git.osmocom.org/libgtpnl/
+m4_define([OVS_CHECK_GTP_L3],
+    [AT_SKIP_IF([! gtp-tunnel list >/dev/null])
+     OVS_CHECK_FIREWALL()])
+
 
 # OVS_CHECK_8021AD()
 m4_define([OVS_CHECK_8021AD],

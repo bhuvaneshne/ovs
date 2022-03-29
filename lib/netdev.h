@@ -126,6 +126,7 @@ struct netdev_tunnel_config {
     bool tos_inherit;
 
     bool csum;
+    bool user_setcsum;
     bool dont_fragment;
     enum netdev_pt_mode pt_mode;
 
@@ -140,6 +141,13 @@ struct netdev_tunnel_config {
     bool erspan_idx_flow;
     bool erspan_dir_flow;
     bool erspan_hwid_flow;
+
+    bool gtp_random_src_port;
+    int gtp_seq;
+    long long int gtp_timestamp;
+    bool gtp_need_to_send;
+    long gtp_rx_cnt;
+    long gtp_tx_cnt;
 };
 
 void netdev_run(void);
@@ -326,6 +334,17 @@ void netdev_queue_dump_start(struct netdev_queue_dump *,
 bool netdev_queue_dump_next(struct netdev_queue_dump *,
                             unsigned int *queue_id, struct smap *details);
 int netdev_queue_dump_done(struct netdev_queue_dump *);
+
+int netdev_should_send_keep_alive_pkt(struct netdev *, bool *res);
+
+int netdev_is_keep_alive_pkt(struct netdev *, const struct flow *flow,
+                               struct flow_wildcards *wc, bool *res);
+
+int netdev_process_keep_alive_pkt(struct netdev *, const struct flow *flow,
+                               const struct dp_packet *p);
+
+int netdev_build_keep_alive_pkt(struct netdev *, struct dp_packet *p,
+                                struct ofpbuf *ofpacts, bool *more_pkts);
 
 /* Iterates through each queue in NETDEV, using DUMP as state.  Fills QUEUE_ID
  * and DETAILS with information about queues.  The client must initialize and

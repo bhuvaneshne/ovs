@@ -5657,6 +5657,12 @@ xlate_sample_action(struct xlate_ctx *ctx,
     cookie.flow_sample.obs_point_id = os->obs_point_id;
     cookie.flow_sample.output_odp_port = output_odp_port;
     cookie.flow_sample.direction = os->direction;
+    cookie.flow_sample.flow_metadata = ctx->xin->flow.metadata;
+    cookie.flow_sample.app_name = ctx->xin->flow.regs[10];
+    cookie.flow_sample.pdp_start_epoch = os->pdp_start_epoch;
+    memcpy(&cookie.flow_sample.msisdn, &os->msisdn, 16);
+    memcpy(&cookie.flow_sample.apn_mac_addr, &os->apn_mac_addr, sizeof(struct eth_addr));
+    memcpy(&cookie.flow_sample.apn_name, &os->apn_name, 24);
 
     compose_sample_action(ctx, probability, &cookie, tunnel_out_port, false);
 }
@@ -7993,17 +7999,14 @@ xlate_resume(struct ofproto_dpif *ofproto,
  * May modify 'packet'.
  * Returns 0 if successful, otherwise a positive errno value. */
 int
-xlate_send_packet(const struct ofport_dpif *ofport, bool oam,
-                  struct dp_packet *packet)
+xlate_send_packet_with_acts(const struct ofport_dpif *ofport,
+                  struct dp_packet *packet, struct ofpbuf *ofpacts)
 {
     struct xlate_cfg *xcfg = ovsrcu_get(struct xlate_cfg *, &xcfgp);
     struct xport *xport;
-    uint64_t ofpacts_stub[1024 / 8];
-    struct ofpbuf ofpacts;
     struct flow flow;
 
-    ofpbuf_use_stack(&ofpacts, ofpacts_stub, sizeof ofpacts_stub);
-    /* Use OFPP_NONE as the in_port to avoid special packet processing. */
+
     flow_extract(packet, &flow);
     flow.in_port.ofp_port = OFPP_NONE;
 
@@ -8012,19 +8015,31 @@ xlate_send_packet(const struct ofport_dpif *ofport, bool oam,
         return EINVAL;
     }
 
+    ofpact_put_OUTPUT(ofpacts)->port = xport->ofp_port;
+
+    /* Actions here are not referring to anything versionable (flow tables or
+     * groups) so we don't need to worry about the version here. */
+    return ofproto_dpif_execute_actions(xport->xbridge->ofproto,
+                                        OVS_VERSION_MAX, &flow, NULL,
+                                        ofpacts->data, ofpacts->size, packet);
+}
+
+int
+xlate_send_packet(const struct ofport_dpif *ofport, bool oam,
+                  struct dp_packet *packet)
+{
+    uint64_t ofpacts_stub[1024 / 8];
+    struct ofpbuf ofpacts;
+
+    ofpbuf_use_stack(&ofpacts, ofpacts_stub, sizeof ofpacts_stub);
+    /* Use OFPP_NONE as the in_port to avoid special packet processing. */
     if (oam) {
         const ovs_be16 flag = htons(NX_TUN_FLAG_OAM);
         ofpact_put_set_field(&ofpacts, mf_from_id(MFF_TUN_FLAGS),
                              &flag, &flag);
     }
 
-    ofpact_put_OUTPUT(&ofpacts)->port = xport->ofp_port;
-
-    /* Actions here are not referring to anything versionable (flow tables or
-     * groups) so we don't need to worry about the version here. */
-    return ofproto_dpif_execute_actions(xport->xbridge->ofproto,
-                                        OVS_VERSION_MAX, &flow, NULL,
-                                        ofpacts.data, ofpacts.size, packet);
+    return xlate_send_packet_with_acts(ofport, packet, &ofpacts);
 }
 
 void

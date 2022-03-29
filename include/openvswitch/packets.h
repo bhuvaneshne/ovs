@@ -55,9 +55,7 @@ struct flow_tnl {
 /* Public flags */
 #define FLOW_TNL_F_OAM (1 << 0)
 
-#define FLOW_TNL_PUB_F_MASK ((1 << 1) - 1)
-
-/* Private flags */
+#define FLOW_TNL_PUB_F_MASK ((1 << 4) - 1)
 #define FLOW_TNL_F_DONT_FRAGMENT (1 << 1)
 #define FLOW_TNL_F_CSUM (1 << 2)
 #define FLOW_TNL_F_KEY (1 << 3)
@@ -94,6 +92,23 @@ struct ovs_key_nsh {
 #define FLOW_NSH_F_CTX (1 << 1)
 
 #define FLOW_NSH_F_MASK ((1 << 2) - 1)
+
+/* GTP protocol stuff used by userspace. */
+struct gtp1_cntr_echo_req_header {
+    ovs_be16	    seq;
+    // we do not need rest of header.
+} __attribute__ ((packed));
+
+struct gtpv1_tlv {
+    uint8_t type;
+    uint8_t value;
+}__attribute__ ((packed));
+
+struct gtp1_cntr_echo_rsp_header {
+    ovs_be16	        seq;
+    struct gtpv1_tlv    unused;
+    struct gtpv1_tlv    recovery;
+} __attribute__ ((packed));
 
 #ifdef __cplusplus
 }

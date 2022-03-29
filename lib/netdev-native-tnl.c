@@ -328,6 +328,9 @@ udp_build_header(struct netdev_tunnel_config *tnl_cfg,
 
     udp = netdev_tnl_ip_build_header(data, params, IPPROTO_UDP);
     udp->udp_dst = tnl_cfg->dst_port;
+    if (!tnl_cfg->gtp_random_src_port) {
+        udp->udp_src = tnl_cfg->dst_port;
+    }
 
     if (params->is_ipv6 || params->flow->tunnel.flags & FLOW_TNL_F_CSUM) {
         /* Write a value in now to mark that we should compute the checksum
@@ -740,14 +743,14 @@ netdev_gtpu_pop_header(struct dp_packet *packet)
         goto err;
     }
 
-    tnl->gtpu_flags = gtph->md.flags;
-    tnl->gtpu_msgtype = gtph->md.msgtype;
+    tnl->gtpu_flags = gtph->flags;
+    tnl->gtpu_msgtype = gtph->msgtype;
     tnl->tun_id = be32_to_be64(get_16aligned_be32(&gtph->teid));
 
     if (tnl->gtpu_msgtype == GTPU_MSGTYPE_GPDU) {
         struct ip_header *ip;
 
-        if (gtph->md.flags & GTPU_S_MASK) {
+        if (gtph->flags & GTPU_S_MASK) {
             gtpu_hlen = GTPU_HLEN + sizeof(struct gtpuhdr_opt);
         } else {
             gtpu_hlen = GTPU_HLEN;
@@ -770,7 +773,7 @@ netdev_gtpu_pop_header(struct dp_packet *packet)
          */
         packet->packet_type = htonl(PT_ETH);
         VLOG_WARN_ONCE("Receive non-GPDU msgtype: %"PRIu8,
-                       gtph->md.msgtype);
+                       gtph->msgtype);
     }
 
     return packet;
@@ -795,10 +798,6 @@ netdev_gtpu_push_header(const struct netdev *netdev,
     payload_len = dp_packet_size(packet);
     udp = netdev_tnl_push_ip_header(packet, data->header,
                                     data->header_len, &ip_tot_size);
-    udp->udp_src = netdev_tnl_get_src_port(packet);
-    udp->udp_len = htons(ip_tot_size);
-    netdev_tnl_calc_udp_csum(udp, packet, ip_tot_size);
-
     gtpuh = ALIGNED_CAST(struct gtpuhdr *, udp + 1);
 
     tnl_cfg = &dev->tnl_cfg;
@@ -808,6 +807,12 @@ netdev_gtpu_push_header(const struct netdev *netdev,
         payload_len += sizeof(struct gtpuhdr_opt);
     }
     gtpuh->len = htons(payload_len);
+
+    if (tnl_cfg->gtp_random_src_port) {
+        udp->udp_src = netdev_tnl_get_src_port(packet);
+    }
+    udp->udp_len = htons(ip_tot_size);
+    netdev_tnl_calc_udp_csum(udp, packet, ip_tot_size);
 }
 
 int
@@ -825,16 +830,16 @@ netdev_gtpu_build_header(const struct netdev *netdev,
     gtph = udp_build_header(tnl_cfg, data, params);
 
     /* Set to default if not set in flow. */
-    gtph->md.flags = params->flow->tunnel.gtpu_flags ?
-                     params->flow->tunnel.gtpu_flags : GTPU_FLAGS_DEFAULT;
-    gtph->md.msgtype = params->flow->tunnel.gtpu_msgtype ?
-                       params->flow->tunnel.gtpu_msgtype : GTPU_MSGTYPE_GPDU;
+    gtph->flags = params->flow->tunnel.gtpu_flags ?
+                  params->flow->tunnel.gtpu_flags : GTPU_FLAGS_DEFAULT;
+    gtph->msgtype = params->flow->tunnel.gtpu_msgtype ?
+                    params->flow->tunnel.gtpu_msgtype : GTPU_MSGTYPE_GPDU;
     put_16aligned_be32(&gtph->teid,
                        be64_to_be32(params->flow->tunnel.tun_id));
 
     gtpu_hlen = sizeof *gtph;
     if (tnl_cfg->set_seq) {
-        gtph->md.flags |= GTPU_S_MASK;
+        gtph->flags |= GTPU_S_MASK;
         gtpu_hlen += sizeof(struct gtpuhdr_opt);
     }
     ovs_mutex_unlock(&dev->mutex);

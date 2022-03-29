@@ -335,7 +335,7 @@ check-kernel: all
 # Testing the out of tree Kernel module
 check-kmod: all
 	$(MAKE) modules_install
-	modprobe -r -a vport-geneve vport-gre vport-lisp vport-stt vport-vxlan openvswitch
+	modprobe -r -a vport-geneve vport-gre vport-lisp vport-stt vport-vxlan vport-gtp openvswitch
 	$(MAKE) check-kernel
 
 check-system-userspace: all
@@ -503,6 +503,9 @@ tests_test_strtok_r_SOURCES = tests/test-strtok_r.c
 noinst_PROGRAMS += tests/test-type-props
 tests_test_type_props_SOURCES = tests/test-type-props.c
 
+noinst_PROGRAMS += tests/test-gtp
+tests_test_gtp_SOURCES = tests/test-gtp.c
+
 # Python tests.
 CHECK_PYFILES = \
 	tests/appctl.py \
@@ -520,7 +523,8 @@ CHECK_PYFILES = \
 	tests/test-unixctl.py \
 	tests/test-vlog.py \
 	tests/uuidfilt.py \
-	tests/sendpkt.py
+	tests/sendpkt.py \
+	tests/gtp-packet.py
 
 EXTRA_DIST += $(CHECK_PYFILES)
 PYCOV_CLEAN_FILES += $(CHECK_PYFILES:.py=.py,cover) .coverage
